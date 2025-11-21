@@ -46,7 +46,7 @@ def load_abaqus_csv(folder_path="."):
                 break
         if theta is None:
             continue
-        
+
         # Load CSV (2 columns)
         arr = np.genfromtxt(filepath, delimiter=",", skip_header=1)
         r_vals = arr[:, 0]               # first column: radial position
@@ -93,36 +93,33 @@ angles = [0, np.pi/4, np.pi/2]
 angle_labels = {0: "θ = 0", np.pi/4: "θ = π/4", np.pi/2: "θ = π/2"}
 
 # =========================================================
-# Plotting function (theory + FE overlay)
+# Plotting function (theory + FE overlay for all angles)
 # =========================================================
-def plot_with_overlay(r_theory, y_theory, comp, theta):
+def plot_component(comp, theory_func):
     plt.figure()
-    plt.plot(r_theory/a, y_theory, label="Theory")
 
-    # Overlay FE curve
-    if theta in abaqus_data[comp]:
-        r_fe = abaqus_data[comp][theta]["r"]
-        s_fe = abaqus_data[comp][theta]["stress"]
-        plt.plot(r_fe/a, s_fe, "--", label="Abaqus")
+    for theta in angles:
+        y_theory = theory_func(r_theory, theta) / sigma_inf
+        plt.plot(r_theory / a, y_theory, label=f"Theory {angle_labels[theta]}")
+
+        # Overlay FE curve if available
+        fe_curve = abaqus_data.get(comp, {}).get(theta)
+        if fe_curve:
+            r_fe = fe_curve["r"]
+            s_fe = fe_curve["stress"]
+            plt.plot(r_fe / a, s_fe, "--", label=f"Abaqus {angle_labels[theta]}")
 
     plt.xlabel("r/a")
     plt.ylabel(f"{comp} / σ∞")
-    plt.title(f"{comp} vs r/a  ({angle_labels[theta]})")
+    plt.title(f"{comp} vs r/a (all angles)")
     plt.grid(True)
     plt.legend()
     plt.show()
 
-# =========================================================
-# Generate all 9 plots
-# =========================================================
-for theta in angles:
-    y = sigma_rr(r_theory, theta) / sigma_inf
-    plot_with_overlay(r_theory, y, "RR", theta)
 
-for theta in angles:
-    y = sigma_tt(r_theory, theta) / sigma_inf
-    plot_with_overlay(r_theory, y, "TT", theta)
-
-for theta in angles:
-    y = tau_rt(r_theory, theta) / sigma_inf
-    plot_with_overlay(r_theory, y, "RT", theta)
+# =========================================================
+# Generate superimposed plots for each component
+# =========================================================
+plot_component("RR", sigma_rr)
+plot_component("TT", sigma_tt)
+plot_component("RT", tau_rt)
