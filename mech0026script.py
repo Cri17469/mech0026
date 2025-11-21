@@ -1,7 +1,12 @@
+import argparse
+
+import matplotlib
+from matplotlib import rcsetup
 import numpy as np
-import matplotlib.pyplot as plt
 import glob
 import os
+
+plt = None
 
 # =========================================================
 # USER INPUT: remote stress sigma_infinity (largest applied stress)
@@ -47,8 +52,15 @@ def load_abaqus_csv(folder_path="."):
         if theta is None:
             continue
         
-        # Load CSV (2 columns)
-        arr = np.genfromtxt(filepath, delimiter=",", skip_header=1)
+        # Load CSV (2 columns). The provided files use whitespace delimiters
+        # and include a blank line followed by a header row, so we skip the
+        # first two lines and let NumPy split on whitespace.
+        arr = np.genfromtxt(filepath, skip_header=2)
+
+        # Guard against empty or malformed files
+        if arr.size == 0:
+            continue
+
         r_vals = arr[:, 0]               # first column: radial position
         stress_vals = arr[:, 1] / sigma_inf   # normalize
 
@@ -60,13 +72,6 @@ def load_abaqus_csv(folder_path="."):
 
     return data
 
-
-# Load FE CSV
-abaqus_data = load_abaqus_csv(".")
-print("Loaded:")
-for comp in abaqus_data:
-    for theta in abaqus_data[comp]:
-        print(f"  {abaqus_data[comp][theta]['filename']} (θ={theta})")
 
 # =========================================================
 # Theoretical stress equations for σ1/σ2 = 0.5
@@ -92,17 +97,43 @@ r_theory = np.linspace(a, 5*a, 500)
 angles = [0, np.pi/4, np.pi/2]
 angle_labels = {0: "θ = 0", np.pi/4: "θ = π/4", np.pi/2: "θ = π/2"}
 
+
+# =========================================================
+# Backend selection
+# =========================================================
+def select_backend(no_show: bool) -> bool:
+    """Configure a non-interactive backend when running headless.
+
+    Returns a boolean indicating whether figures should be displayed.
+    """
+
+    if no_show:
+        matplotlib.use("Agg")
+        return False
+
+    # If the current backend is already interactive, keep showing figures.
+    backend = matplotlib.get_backend()
+    interactive_backends = {name.lower() for name in rcsetup.interactive_bk}
+    if backend.lower() in interactive_backends:
+        return True
+
+    # Switch to Agg for safety but avoid calling plt.show() to prevent warnings.
+    matplotlib.use("Agg")
+    print(f"Backend '{backend}' is non-interactive; forcing --no-show to avoid warnings.")
+    return False
+
 # =========================================================
 # Plotting function (theory + FE overlay)
 # =========================================================
-def plot_with_overlay(r_theory, y_theory, comp, theta):
+def plot_with_overlay(r_theory, y_theory, comp, theta, fe_data, show=True):
+    global plt
     plt.figure()
     plt.plot(r_theory/a, y_theory, label="Theory")
 
     # Overlay FE curve
-    if theta in abaqus_data[comp]:
-        r_fe = abaqus_data[comp][theta]["r"]
-        s_fe = abaqus_data[comp][theta]["stress"]
+    if theta in fe_data[comp]:
+        r_fe = fe_data[comp][theta]["r"]
+        s_fe = fe_data[comp][theta]["stress"]
         plt.plot(r_fe/a, s_fe, "--", label="Abaqus")
 
     plt.xlabel("r/a")
@@ -110,19 +141,57 @@ def plot_with_overlay(r_theory, y_theory, comp, theta):
     plt.title(f"{comp} vs r/a  ({angle_labels[theta]})")
     plt.grid(True)
     plt.legend()
-    plt.show()
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 # =========================================================
 # Generate all 9 plots
 # =========================================================
-for theta in angles:
-    y = sigma_rr(r_theory, theta) / sigma_inf
-    plot_with_overlay(r_theory, y, "RR", theta)
+def generate_plots(fe_data, show=True):
+    for theta in angles:
+        y = sigma_rr(r_theory, theta) / sigma_inf
+        plot_with_overlay(r_theory, y, "RR", theta, fe_data, show=show)
 
-for theta in angles:
-    y = sigma_tt(r_theory, theta) / sigma_inf
-    plot_with_overlay(r_theory, y, "TT", theta)
+    for theta in angles:
+        y = sigma_tt(r_theory, theta) / sigma_inf
+        plot_with_overlay(r_theory, y, "TT", theta, fe_data, show=show)
 
-for theta in angles:
-    y = tau_rt(r_theory, theta) / sigma_inf
-    plot_with_overlay(r_theory, y, "RT", theta)
+    for theta in angles:
+        y = tau_rt(r_theory, theta) / sigma_inf
+        plot_with_overlay(r_theory, y, "RT", theta, fe_data, show=show)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Plot theoretical and FE stresses.")
+    parser.add_argument(
+        "--no-show",
+        action="store_true",
+        help="Generate plots without displaying them (useful for headless testing).",
+    )
+    parser.add_argument(
+        "--folder",
+        default=".",
+        help="Folder containing the FE CSV files (default: current directory).",
+    )
+    args = parser.parse_args()
+
+    show_figures = select_backend(args.no_show)
+
+    # Import pyplot only after the backend decision is made.
+    global plt
+    import matplotlib.pyplot as plt  # noqa: WPS433 (intentional import after backend selection)
+
+    abaqus_data = load_abaqus_csv(args.folder)
+    print("Loaded:")
+    for comp in abaqus_data:
+        for theta in abaqus_data[comp]:
+            print(f"  {abaqus_data[comp][theta]['filename']} (θ={theta})")
+
+    generate_plots(abaqus_data, show=show_figures)
+
+
+if __name__ == "__main__":
+    main()
